@@ -1,0 +1,13 @@
+fastapi
+uvicorn[standard]
+sqlalchemy
+alembic
+asyncpg
+pydantic[email]
+pydantic-settings
+redis
+resend
+python-dotenv
+pytest
+httpx
+
