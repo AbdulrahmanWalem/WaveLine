@@ -1,0 +1,749 @@
+================================================================================
+  WAVELINE — Async Notification Microservice
+  Developer  : Abdulrahman
+  Created    : 2026
+  Context File Version: 1.0
+  Purpose    : Full project roadmap, todo tracker, and context for any AI model
+================================================================================
+
+HOW TO USE THIS FILE
+────────────────────
+- This file is your single source of truth for the entire project.
+- Update checkboxes as you complete tasks: [ ] → [x]
+- When starting a new AI session, paste this file and say:
+  "Here is my project context file. Read it and help me continue from where I left off."
+- Re-download an updated version of this file whenever major milestones are hit.
+
+================================================================================
+  PROJECT OVERVIEW
+================================================================================
+
+NAME        : Waveline
+TYPE        : Backend Microservice / REST API
+Description : A self-hostable async notification delivery service.
+              Any application can plug in via API key to send email,
+              in-app, and webhook notifications without blocking.
+
+Core Concept: App sends a request → Waveline queues it → Worker delivers it
+              This decouples your API speed from delivery speed (async).
+
+Target Use  : Portfolio project demonstrating microservices, async systems,
+              API design, containerization, and cloud deployment.
+
+CV Line     :
+  "Waveline Notification Microservice — Python, FastAPI, PostgreSQL, Redis, Docker
+   Built an async notification delivery service supporting email, webhook, and
+   in-app channels. Implemented queue-based architecture using Redis Streams to
+   decouple API response from delivery. Deployed on Railway with Docker Compose."
+
+================================================================================
+  DEVELOPER ENVIRONMENT
+================================================================================
+
+OS          : Pop!_OS (Linux) — primary machine
+Username    : abdulrahmanw
+Python      : 3.12.3 ✅ installed
+Docker      : 28.2.2 ✅ installed
+Docker Compose: included with Docker install ✅
+Secondary   : Windows laptop (use only for cross-browser UI testing later)
+
+================================================================================
+  ACCOUNTS TO CREATE (Free)
+================================================================================
+
+[ ] GitHub          → https://github.com
+    - Create repo named: waveline
+    - Visibility: Public (better for portfolio)
+    - Initialize with README
+
+[ ] Resend.com      → https://resend.com
+    - Free tier: 100 emails/day, 3,000/month
+    - No credit card required
+    - After signup: go to API Keys → Create API Key → save it somewhere safe
+    - Add and verify a sender domain OR use their test sandbox domain first
+
+[ ] Railway.app     → https://railway.app
+    - Sign up with GitHub account
+    - Free tier: $5 credit/month (enough for this project)
+    - Alternative if Railway runs out: https://render.com (also free)
+
+================================================================================
+  TECH STACK
+================================================================================
+
+Layer           Tool              Version     Purpose
+──────────────────────────────────────────────────────────────────────────────
+API Framework   FastAPI           latest      REST API, async support, auto docs
+Data Validation Pydantic          v2          Request/response schemas
+Database        PostgreSQL        15          Persistent storage
+ORM             SQLAlchemy        2.0         Database interaction
+Migrations      Alembic           latest      DB schema versioning
+Queue           Redis Streams     7           Async job queue
+Worker          Python script     -           Consumes queue, delivers messages
+Email           Resend SDK        latest      Email delivery (free tier)
+Containers      Docker Compose    v2          Local orchestration
+Deployment      Railway           -           Cloud hosting (free tier)
+Testing         Pytest            latest      Unit and integration tests
+API Testing     Bruno / Postman   -           Manual endpoint testing
+
+================================================================================
+  PROJECT FOLDER STRUCTURE
+================================================================================
+
+waveline/
+├── app/
+│   ├── __init__.py
+│   ├── main.py               ← FastAPI app entry point
+│   ├── config.py             ← environment variables & settings
+│   ├── database.py           ← DB connection and session
+│   ├── api/
+│   │   ├── __init__.py
+│   │   ├── apps.py           ← /apps routes (register, stats)
+│   │   └── notifications.py  ← /notifications routes
+│   ├── models/
+│   │   ├── __init__.py
+│   │   ├── app.py            ← App / API key model
+│   │   └── notification.py   ← Notification + DeliveryLog models
+│   ├── schemas/
+│   │   ├── __init__.py
+│   │   ├── app.py            ← Pydantic schemas for apps
+│   │   └── notification.py   ← Pydantic schemas for notifications
+│   ├── services/
+│   │   ├── __init__.py
+│   │   ├── queue.py          ← Redis stream push/read logic
+│   │   └── delivery.py       ← Email, webhook, in-app delivery logic
+│   └── worker/
+│       ├── __init__.py
+│       └── main.py           ← Worker loop (reads queue, calls delivery)
+├── alembic/                  ← DB migration files (auto-generated)
+├── tests/
+│   ├── test_apps.py
+│   └── test_notifications.py
+├── docker-compose.yml        ← Runs API + Worker + PostgreSQL + Redis
+├── Dockerfile                ← Container definition for API and Worker
+├── requirements.txt          ← Python dependencies
+├── .env.example              ← Template for environment variables
+├── .env                      ← Your actual secrets (never commit this)
+├── .gitignore                ← Must include .env
+└── README.md                 ← Architecture diagram + setup + API docs
+
+================================================================================
+  DATABASE SCHEMA
+================================================================================
+
+TABLE: apps
+  id            UUID          primary key
+  name          VARCHAR       app name
+  api_key       VARCHAR       hashed, unique
+  webhook_url   VARCHAR       optional, where to POST webhook notifications
+  created_at    TIMESTAMP
+
+TABLE: notifications
+  id            UUID          primary key
+  app_id        UUID          foreign key → apps.id
+  recipient     VARCHAR       email or user ID
+  channel       ENUM          'email' | 'inapp' | 'webhook'
+  title         VARCHAR
+  body          TEXT
+  status        ENUM          'pending' | 'queued' | 'sent' | 'failed'
+  read          BOOLEAN       default false (for inapp)
+  created_at    TIMESTAMP
+  updated_at    TIMESTAMP
+
+TABLE: delivery_logs
+  id            UUID          primary key
+  notification_id UUID        foreign key → notifications.id
+  attempt       INTEGER       which retry attempt (1, 2, 3)
+  status        ENUM          'success' | 'failure'
+  error_message TEXT          null if success
+  attempted_at  TIMESTAMP
+
+================================================================================
+  API ENDPOINTS
+================================================================================
+
+AUTH: All endpoints (except /apps/register) require header:
+      X-API-Key: <your_api_key>
+
+── Apps ──────────────────────────────────────────────────────────────────────
+
+POST   /apps/register
+  Body    : { "name": "my-app" }
+  Returns : { "api_key": "...", "app_id": "..." }
+  Notes   : Generates and returns a plain API key (store it, it won't show again)
+
+GET    /apps/stats
+  Returns : { "total_sent": 42, "total_failed": 2, "total_pending": 1 }
+
+── Notifications ──────────────────────────────────────────────────────────────
+
+POST   /notifications/send
+  Body    : {
+              "recipient": "user@example.com",
+              "channel": "email",          ← "email" | "inapp" | "webhook"
+              "title": "Hello",
+              "body": "Your order shipped"
+            }
+  Returns : { "notification_id": "...", "status": "queued" }
+
+GET    /notifications/{id}
+  Returns : full notification object with current status
+
+GET    /notifications/feed?recipient=user@example.com
+  Returns : list of unread inapp notifications for that recipient
+
+PATCH  /notifications/{id}/read
+  Returns : { "status": "ok" }
+
+================================================================================
+  ENVIRONMENT VARIABLES (.env)
+================================================================================
+
+DATABASE_URL=postgresql://waveline:waveline@localhost:5432/wavelinedb
+REDIS_URL=redis://localhost:6379
+RESEND_API_KEY=re_xxxxxxxxxxxx
+SECRET_KEY=your-random-secret-for-hashing
+ENVIRONMENT=development
+
+================================================================================
+  USEFUL LINKS
+================================================================================
+
+LEARNING
+────────
+FastAPI official docs          → https://fastapi.tiangolo.com
+FastAPI full tutorial          → https://fastapi.tiangolo.com/tutorial/
+SQLAlchemy 2.0 docs            → https://docs.sqlalchemy.org/en/20/
+Alembic tutorial               → https://alembic.sqlalchemy.org/en/latest/tutorial.html
+Redis Streams explained        → https://redis.io/docs/data-types/streams/
+Redis-py Python client docs    → https://redis-py.readthedocs.io/en/stable/
+Pydantic v2 docs               → https://docs.pydantic.dev/latest/
+Docker Compose docs            → https://docs.docker.com/compose/
+Resend Python SDK              → https://resend.com/docs/send-with-python
+
+YOUTUBE (free courses)
+──────────────────────
+FastAPI crash course            → search "FastAPI crash course Traversy Media"
+FastAPI + PostgreSQL full build → search "ArjanCodes FastAPI"
+Docker for beginners (Linux)   → search "TechWorld with Nana Docker tutorial"
+Redis explained in 5 min       → search "Fireship Redis explained"
+
+TOOLS
+─────
+Bruno (free Postman alternative) → https://www.usebruno.com
+pgAdmin (PostgreSQL GUI)         → https://www.pgadmin.org
+RedisInsight (Redis GUI)         → https://redis.io/redisinsight/
+Railway deployment docs          → https://docs.railway.app
+
+================================================================================
+  PHASE 0 — ONE-TIME SETUP
+  Estimated time: 1–2 hours
+================================================================================
+
+GOAL: Git repo ready, Python environment ready, Docker confirmed working.
+
+[ ] Create GitHub repo "waveline" (public, with README)
+[ ] Clone repo to your machine:
+      git clone https://github.com/YOUR_USERNAME/waveline.git
+      cd waveline
+
+[ ] Create Python virtual environment:
+      python3 -m venv venv
+      source venv/bin/activate
+
+[ ] Create requirements.txt with initial dependencies:
+      fastapi
+      uvicorn[standard]
+      sqlalchemy
+      alembic
+      asyncpg
+      pydantic[email]
+      pydantic-settings
+      redis
+      resend
+      python-dotenv
+      pytest
+      httpx
+
+[ ] Install dependencies:
+      pip install -r requirements.txt
+
+[ ] Create .gitignore with these entries:
+      .env
+      venv/
+      __pycache__/
+      *.pyc
+      .DS_Store
+
+[ ] Create .env.example file with empty variable names (no real values)
+[ ] Create .env file with your actual values (never commit this)
+[ ] Create the full folder structure listed in PROJECT FOLDER STRUCTURE above
+[ ] Add empty __init__.py files to all folders under app/
+
+[ ] Create docker-compose.yml with:
+      - postgres service (image: postgres:15)
+      - redis service (image: redis:7)
+      - api service (build from Dockerfile)
+      - worker service (build from Dockerfile, different command)
+
+[ ] Create Dockerfile:
+      FROM python:3.12-slim
+      WORKDIR /app
+      COPY requirements.txt .
+      RUN pip install -r requirements.txt
+      COPY . .
+
+[ ] Test Docker works:
+      docker compose up postgres redis
+      (should see both containers start without errors)
+
+[ ] First commit:
+      git add .
+      git commit -m "feat: initial project scaffold"
+      git push
+
+PHASE 0 COMPLETE? [ ]
+
+================================================================================
+  PHASE 1 — DATABASE + FIRST ENDPOINT
+  Estimated time: 5–7 days
+================================================================================
+
+GOAL: Working API that registers an app and returns an API key.
+      You can test it in Bruno/Postman and see data saved in PostgreSQL.
+
+── Database Setup ────────────────────────────────────────────────────────────
+
+[ ] Write app/database.py:
+      - create async SQLAlchemy engine using DATABASE_URL from .env
+      - create SessionLocal factory
+      - create Base = declarative_base()
+      - create get_db() dependency function
+
+[ ] Write app/models/app.py:
+      - App model with all fields from DATABASE SCHEMA above
+      - Use UUID for primary keys (import from sqlalchemy.dialects.postgresql)
+
+[ ] Write app/models/notification.py:
+      - Notification model
+      - DeliveryLog model
+      - Use SQLAlchemy Enum type for status and channel fields
+
+[ ] Initialize Alembic:
+      alembic init alembic
+      (edit alembic/env.py to point to your models and DATABASE_URL)
+
+[ ] Create and run first migration:
+      alembic revision --autogenerate -m "initial tables"
+      alembic upgrade head
+
+[ ] Verify tables exist in PostgreSQL:
+      docker compose exec postgres psql -U waveline -d wavelinedb
+      \dt    ← should list your tables
+
+── API Key Logic ─────────────────────────────────────────────────────────────
+
+[ ] Write API key generation in app/services/ or app/api/apps.py:
+      - Generate a random key using: secrets.token_urlsafe(32)
+      - Hash it before storing: hashlib.sha256(key.encode()).hexdigest()
+      - Return the PLAIN key to user (only time they see it)
+      - Store only the HASH in the database
+
+[ ] Write Pydantic schemas in app/schemas/app.py:
+      - AppCreate  : { name: str }
+      - AppResponse: { app_id: UUID, api_key: str }
+      - StatsResponse: { total_sent: int, total_failed: int, total_pending: int }
+
+── First Endpoint ────────────────────────────────────────────────────────────
+
+[ ] Write app/api/apps.py with POST /apps/register:
+      - Accept AppCreate schema
+      - Generate + hash API key
+      - Save app to DB
+      - Return plain API key in AppResponse
+
+[ ] Write app/main.py:
+      - Create FastAPI() instance
+      - Include apps router
+      - Add startup event to create DB tables
+
+[ ] Test it end to end:
+      docker compose up
+      Open Bruno → POST http://localhost:8000/apps/register
+      Body: { "name": "test-app" }
+      Should return an api_key
+
+[ ] Check FastAPI auto-docs work:
+      Open browser → http://localhost:8000/docs
+      Should show your endpoint with schema
+
+[ ] Write auth middleware in app/main.py or a dependency:
+      - Read X-API-Key header
+      - Hash it and look up in DB
+      - If not found → return 401
+      - If found → attach app to request state
+
+[ ] Protect POST /apps/stats with auth middleware
+[ ] Write GET /apps/stats endpoint (just return counts from notifications table)
+
+[ ] Commit:
+      git commit -m "feat: app registration and API key auth"
+
+PHASE 1 COMPLETE? [ ]
+
+================================================================================
+  PHASE 2 — NOTIFICATION CRUD ENDPOINTS
+  Estimated time: 5–7 days
+================================================================================
+
+GOAL: Full notification API working. Can send, fetch, and mark as read.
+      No actual delivery yet — just stored in DB with status "queued".
+
+[ ] Write Pydantic schemas in app/schemas/notification.py:
+      - NotificationCreate : { recipient, channel, title, body }
+      - NotificationResponse: full object including status, created_at
+      - FeedResponse        : list of NotificationResponse
+
+[ ] Write POST /notifications/send:
+      - Validate input with NotificationCreate schema
+      - Save notification to DB with status = "pending"
+      - (Queue step comes in Phase 3 — for now just save and return)
+      - Return { notification_id, status: "pending" }
+
+[ ] Write GET /notifications/{id}:
+      - Fetch notification by ID
+      - Must belong to the authenticated app (check app_id)
+      - Return 404 if not found or wrong app
+
+[ ] Write GET /notifications/feed:
+      - Query param: recipient (required)
+      - Return all notifications where:
+          channel = "inapp"
+          read = false
+          app_id = authenticated app
+      - Order by created_at DESC
+
+[ ] Write PATCH /notifications/{id}/read:
+      - Set read = true for the notification
+      - Return { status: "ok" }
+
+[ ] Test all endpoints in Bruno:
+      [ ] POST /notifications/send (email channel)
+      [ ] POST /notifications/send (inapp channel)
+      [ ] GET  /notifications/{id}
+      [ ] GET  /notifications/feed?recipient=test@test.com
+      [ ] PATCH /notifications/{id}/read
+      [ ] GET  /notifications/feed again (should be empty now)
+
+[ ] Make sure unauthenticated requests return 401 on all routes
+
+[ ] Commit:
+      git commit -m "feat: notification CRUD endpoints"
+
+PHASE 2 COMPLETE? [ ]
+
+================================================================================
+  PHASE 3 — REDIS QUEUE + WORKER
+  Estimated time: 7–10 days (most important phase, take your time)
+================================================================================
+
+GOAL: API pushes jobs to Redis Stream. Worker runs separately, reads the stream,
+      and processes notifications. This is the async architecture.
+
+── Understanding Redis Streams ───────────────────────────────────────────────
+READ BEFORE CODING:
+  → https://redis.io/docs/data-types/streams/
+  Key concepts:
+  - XADD   : add a message to a stream
+  - XREAD  : read messages from a stream
+  - Consumer Groups: multiple workers can share a stream (advanced, skip for now)
+
+── Queue Service ─────────────────────────────────────────────────────────────
+
+[ ] Write app/services/queue.py:
+      - Connect to Redis using redis-py
+      - write push_to_queue(notification_id: str):
+            redis.xadd("notifications_stream", {"notification_id": notification_id})
+      - write read_from_queue():
+            redis.xread({"notifications_stream": "$"}, block=1000)
+            (blocks for 1 second waiting for new messages)
+
+[ ] Update POST /notifications/send to:
+      1. Save notification to DB with status = "pending"
+      2. Call push_to_queue(str(notification.id))
+      3. Update status = "queued"
+      4. Return response
+      (API returns immediately — worker handles the rest)
+
+── Worker ────────────────────────────────────────────────────────────────────
+
+[ ] Write app/worker/main.py:
+      - Connect to Redis and PostgreSQL
+      - Infinite loop:
+          messages = read_from_queue()
+          for each message:
+              get notification_id from message
+              fetch notification from DB
+              call appropriate delivery function based on channel
+              update notification status to "sent" or "failed"
+              write to delivery_logs table
+              acknowledge message (XACK)
+
+[ ] For now, delivery functions can just print/log — real delivery in Phase 4:
+      def deliver_email(notification): print(f"EMAIL to {notification.recipient}")
+      def deliver_inapp(notification): print(f"INAPP stored")
+      def deliver_webhook(notification): print(f"WEBHOOK to app.webhook_url")
+
+[ ] Add worker service to docker-compose.yml:
+      worker:
+        build: .
+        command: python -m app.worker.main
+        depends_on:
+          - postgres
+          - redis
+        env_file: .env
+
+[ ] Test the full async flow:
+      docker compose up
+      POST /notifications/send
+      Watch worker container logs → should see delivery log appear
+      GET  /notifications/{id}   → status should be "sent"
+
+[ ] Test what happens when worker is down:
+      docker compose stop worker
+      Send 3 notifications (they queue up)
+      docker compose start worker
+      Watch all 3 get processed in order
+
+[ ] Commit:
+      git commit -m "feat: Redis Streams queue and async worker"
+
+PHASE 3 COMPLETE? [ ]
+
+================================================================================
+  PHASE 4 — REAL DELIVERY CHANNELS
+  Estimated time: 5–7 days
+================================================================================
+
+GOAL: Notifications actually get delivered. Real emails arrive in inbox.
+      Webhooks POST to real URLs. In-app feeds work end to end.
+
+── Email Delivery ────────────────────────────────────────────────────────────
+
+[ ] Sign up at https://resend.com and get API key
+[ ] Install Resend SDK: pip install resend (add to requirements.txt)
+[ ] Add RESEND_API_KEY to .env
+
+[ ] Write deliver_email() in app/services/delivery.py:
+      import resend
+      resend.api_key = settings.RESEND_API_KEY
+      resend.Emails.send({
+          "from": "waveline@yourdomain.com",   ← use Resend sandbox for testing
+          "to": notification.recipient,
+          "subject": notification.title,
+          "html": f"<p>{notification.body}</p>"
+      })
+
+[ ] Test: send an email notification to your own email address
+[ ] Verify email arrives in inbox
+
+── Webhook Delivery ──────────────────────────────────────────────────────────
+
+[ ] Write deliver_webhook() in app/services/delivery.py:
+      import httpx
+      httpx.post(app.webhook_url, json={
+          "id": str(notification.id),
+          "title": notification.title,
+          "body": notification.body,
+          "recipient": notification.recipient
+      }, timeout=10)
+
+[ ] Test using https://webhook.site (free tool that catches webhook POSTs):
+      [ ] Go to webhook.site and copy your unique URL
+      [ ] Update your test app's webhook_url to that URL
+      [ ] Send a webhook notification
+      [ ] Check webhook.site → should see the POST arrive
+
+── Retry Logic ───────────────────────────────────────────────────────────────
+
+[ ] Add retry logic to worker:
+      - If delivery fails, wait 5 seconds and retry
+      - Max 3 attempts
+      - After 3 failures, set notification status = "failed"
+      - Log each attempt in delivery_logs table with error_message
+
+[ ] Test retry: temporarily break your Resend key → should see 3 attempts in logs
+
+── In-App ────────────────────────────────────────────────────────────────────
+
+[ ] In-app delivery is already done (stored in DB, served via /feed endpoint)
+[ ] Just make sure deliver_inapp() sets status = "sent" so the worker marks it
+
+[ ] Commit:
+      git commit -m "feat: email, webhook, and inapp delivery with retry logic"
+
+PHASE 4 COMPLETE? [ ]
+
+================================================================================
+  PHASE 5 — POLISH, RATE LIMITING, TESTS, DEPLOY
+  Estimated time: 7–10 days
+================================================================================
+
+GOAL: Production-ready polish. Deployed live URL. Clean README.
+      This is what makes it a portfolio project, not just a learning exercise.
+
+── Rate Limiting ─────────────────────────────────────────────────────────────
+
+[ ] Add slowapi library: pip install slowapi (add to requirements.txt)
+[ ] Add rate limiting to POST /notifications/send:
+      - Max 60 requests per minute per API key
+      - Return 429 Too Many Requests when exceeded
+
+── Input Validation Hardening ────────────────────────────────────────────────
+
+[ ] Validate email format in NotificationCreate schema (Pydantic handles this)
+[ ] Add max length to title (255) and body (5000 characters)
+[ ] Return clear error messages for invalid input
+
+── Tests ─────────────────────────────────────────────────────────────────────
+
+[ ] Install pytest and httpx (already in requirements.txt)
+[ ] Write tests/test_apps.py:
+      [ ] test_register_app_success
+      [ ] test_register_app_duplicate_name (should still work, names aren't unique)
+      [ ] test_stats_unauthenticated (should return 401)
+      [ ] test_stats_authenticated (should return counts)
+
+[ ] Write tests/test_notifications.py:
+      [ ] test_send_notification_success
+      [ ] test_send_notification_unauthenticated
+      [ ] test_send_notification_invalid_channel
+      [ ] test_get_notification_success
+      [ ] test_get_notification_wrong_app (should return 404)
+      [ ] test_feed_returns_only_unread
+      [ ] test_mark_as_read
+
+[ ] Run tests:
+      pytest tests/ -v
+
+── README.md ─────────────────────────────────────────────────────────────────
+
+[ ] Add ASCII or image architecture diagram showing:
+      Client → FastAPI → Redis Stream → Worker → [Email / Webhook / InApp]
+                     ↓                       ↓
+                 PostgreSQL             PostgreSQL
+
+[ ] Add sections:
+      [ ] What is Waveline (2–3 sentences)
+      [ ] Architecture diagram
+      [ ] Tech stack list
+      [ ] How to run locally (exact commands)
+      [ ] API reference (all endpoints with example request/response)
+      [ ] Environment variables table
+      [ ] How to run tests
+
+── Deployment ────────────────────────────────────────────────────────────────
+
+[ ] Create Railway account at https://railway.app (sign in with GitHub)
+
+[ ] Create new Railway project:
+      [ ] Add PostgreSQL service (Railway provides it)
+      [ ] Add Redis service (Railway provides it)
+      [ ] Add your GitHub repo as a service
+      [ ] Set environment variables in Railway dashboard (copy from .env)
+
+[ ] Add Procfile or railway.toml to tell Railway how to start:
+      web: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+      worker: python -m app.worker.main
+
+[ ] Deploy and verify:
+      [ ] Live URL works (Railway gives you one)
+      [ ] POST /apps/register works on live URL
+      [ ] Send a notification → verify email arrives
+
+[ ] Add live URL to your GitHub README
+
+[ ] Final commit:
+      git commit -m "feat: rate limiting, tests, deploy to Railway"
+      git push
+
+PHASE 5 COMPLETE? [ ]
+
+================================================================================
+  PROJECT COMPLETE CHECKLIST
+================================================================================
+
+[ ] Phase 0 — Setup complete
+[ ] Phase 1 — Database + Auth complete
+[ ] Phase 2 — Notification endpoints complete
+[ ] Phase 3 — Redis queue + worker complete
+[ ] Phase 4 — Real delivery channels complete
+[ ] Phase 5 — Polish + deployed complete
+
+[ ] GitHub repo is public and has a clean README
+[ ] Live URL is working on Railway
+[ ] CV / LinkedIn updated with project
+
+================================================================================
+  COMMON ERRORS AND FIXES
+================================================================================
+
+Error: "connection refused" for PostgreSQL
+Fix  : Make sure docker compose is running. Check with: docker compose ps
+
+Error: "ModuleNotFoundError"
+Fix  : Make sure venv is activated: source venv/bin/activate
+
+Error: Alembic "target database is not up to date"
+Fix  : Run: alembic upgrade head
+
+Error: Redis connection error in worker
+Fix  : Worker starts before Redis is ready. Add "depends_on: redis" in compose
+       or add a retry loop at worker startup.
+
+Error: 401 on authenticated endpoint
+Fix  : Make sure header is exactly: X-API-Key (capital X, capital A, capital K)
+
+Error: Railway deploy fails
+Fix  : Check Railway logs. Usually missing env variable or wrong start command.
+
+================================================================================
+  CONTEXT FOR AI MODELS — PASTE THIS SECTION WHEN STARTING NEW SESSION
+================================================================================
+
+Hi, I'm a CS senior building a project called Waveline — an async notification
+microservice. Here is my full project context file. Please read it carefully
+and help me continue.
+
+My environment:
+- Pop!_OS Linux
+- Python 3.12.3
+- Docker 28.2.2
+- Stack: FastAPI + PostgreSQL + Redis Streams + Docker Compose
+- Deployment target: Railway (free tier)
+
+Current status: [UPDATE THIS LINE BEFORE PASTING — e.g. "Phase 2 in progress"]
+
+[paste the rest of this file below]
+
+================================================================================
+  NOTES (add your own as you go)
+================================================================================
+
+Date Started    :
+Phase 1 Done    :
+Phase 2 Done    :
+Phase 3 Done    :
+Phase 4 Done    :
+Phase 5 Done    :
+Live URL        :
+GitHub URL      :
+
+Personal notes:
+
+
+
+
+================================================================================
+  END OF CONTEXT FILE — WAVELINE v1.0
+================================================================================
